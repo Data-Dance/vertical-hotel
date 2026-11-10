@@ -1,7 +1,8 @@
 # Copyright (C) 2024-TODAY Serpent Consulting Services Pvt. Ltd. (<http://www.serpentcs.com>).
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from odoo import fields
 from odoo.exceptions import UserError, ValidationError
@@ -311,6 +312,28 @@ class TestReservation(common.TransactionCase):
         action = self._reservation().action_send_reservation_mail()
         self.assertEqual(action["res_model"], "mail.compose.message")
         self.assertTrue(action["context"]["default_template_id"])
+
+    def test_mail_templates_dates(self):
+        """Dates are printed in the hotel's timezone, in the guest's format."""
+        self.company.partner_id.tz = "Pacific/Auckland"
+        reservation = self._reservation()
+        tz = ZoneInfo("Pacific/Auckland")
+        local_checkin = reservation.checkin.replace(tzinfo=UTC).astimezone(tz)
+        local_checkout = reservation.checkout.replace(tzinfo=UTC).astimezone(tz)
+        # 12:00 UTC is the next day over there
+        self.assertNotEqual(local_checkin.date(), reservation.checkin.date())
+        for xmlid in (
+            "hotel_reservation.email_template_hotel_reservation",
+            "hotel_reservation.mail_template_reservation_reminder_24hrs",
+        ):
+            body = self.env.ref(xmlid)._render_field(
+                "body_html", reservation.ids, compute_lang=True
+            )[reservation.id]
+            self.assertIn(f"{local_checkin:%m/%d/%Y %H:%M}", body, xmlid)
+            self.assertIn(f"{local_checkout:%m/%d/%Y %H:%M}", body, xmlid)
+            self.assertNotIn(str(reservation.checkin), body, xmlid)
+            for wrong in ("%Y", "$", "nbsp", "Childrens"):
+                self.assertNotIn(wrong, body, xmlid)
 
     def test_reminder_24hrs(self):
         tomorrow = datetime.combine(fields.Date.today() + timedelta(days=1), time(14))

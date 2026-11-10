@@ -129,6 +129,11 @@ class HotelReservation(models.Model):
         for res in self:
             res.no_of_folio = len(res.folio_id)
 
+    def _get_hotel_tz_name(self):
+        """Timezone the hotel's days and hours are meant in."""
+        self.ensure_one()
+        return self.company_id.partner_id.tz or self.create_uid.tz or "UTC"
+
     @api.ondelete(at_uninstall=False)
     def _unlink_except_non_draft(self):
         if any(reserv.state != "draft" for reserv in self):

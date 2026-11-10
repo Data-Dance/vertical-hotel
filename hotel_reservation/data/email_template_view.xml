@@ -35,7 +35,7 @@
                         Please find all the details regarding the confirmation
                         of the reservation on Date <strong>
                     <t
-                        t-out="format_datetime(object.date_order,tz=user.tz,dt_format='%Y-%m-%d %H:%M:%S')"
+                        t-out="format_datetime(object.date_order, tz=object._get_hotel_tz_name(), dt_format='short')"
                     />
                 </strong> are listed below:
                     </p>
@@ -50,14 +50,14 @@
                         Date Of Arrival :
                         <strong>
                     <t
-                        t-out="format_datetime(object.checkin,tz=user.tz, dt_format='%Y-%m-%d %H:%M:%S')"
+                        t-out="format_datetime(object.checkin, tz=object._get_hotel_tz_name(), dt_format='short')"
                     />
                 </strong>
                         <br />
                         Date Of Departure :
                         <strong>
                     <t
-                        t-out="format_datetime(object.checkout,tz=user.tz, dt_format='%Y-%m-%d %H:%M:%S')"
+                        t-out="format_datetime(object.checkout, tz=object._get_hotel_tz_name(), dt_format='short')"
                     />
                 </strong>
                         <br />
@@ -71,7 +71,7 @@
                 </strong> Adults
                         and <strong>
                     <t t-out="object.children" />
-                </strong> Childrens
+                </strong> Children
                         <br />
                     </p>
                     <strong>Room Rate Per Night:</strong>
@@ -183,7 +183,9 @@
                         .
                         </t>
                         Your checkin has been confirmed on Date <strong>
-                    <t t-out="object.date_order" />
+                    <t
+                        t-out="format_datetime(object.date_order, tz=object._get_hotel_tz_name(), dt_format='short')"
+                    />
                 </strong>.
                         Please find all the details regarding to the reservation
                         as listed below:
@@ -192,32 +194,38 @@
                     <strong>Details :</strong>
                     <br />
                     <p style="border-left: 1px solid #8e0000; margin-left: 30px;">
-                        &amp;nbsp;&amp;nbsp;Name Of Guest :
+                        &#160;&#160;Name Of Guest :
                         <strong>
                     <t t-out="object.partner_id.name" />
                 </strong>
                         <br />
-                        &amp;nbsp;&amp;nbsp;Date Of Arrival :
+                        &#160;&#160;Date Of Arrival :
                         <strong>
-                    <t t-out="object.checkin" />
+                    <t
+                        t-out="format_datetime(object.checkin, tz=object._get_hotel_tz_name(), dt_format='short')"
+                    />
                 </strong>
                         <br />
-                        &amp;nbsp;&amp;nbsp;Date Of Departure :
+                        &#160;&#160;Date Of Departure :
                         <strong>
-                    <t t-out="object.checkout" />
+                    <t
+                        t-out="format_datetime(object.checkout, tz=object._get_hotel_tz_name(), dt_format='short')"
+                    />
                 </strong>
                         <br />
-                        &amp;nbsp;&amp;nbsp;Reservation Number :
-                        <strong>$<t t-out="object.reservation_no" /></strong>
+                        &#160;&#160;Reservation Number :
+                        <strong>
+                    <t t-out="object.reservation_no" />
+                </strong>
                         <br />
-                        &amp;nbsp;&amp;nbsp;Number Of Persons : <strong>
+                        &#160;&#160;Number Of Persons : <strong>
                     <t t-out="object.adults" />
                 </strong> Adults and <strong>
                     <t t-out="object.children" />
-                </strong> Childrens
+                </strong> Children
                         <br />
                     </p>
-                    &amp;nbsp;&amp;nbsp;
+                    &#160;&#160;
                     <strong>Room Rate Per Night:</strong>
                     <br />
                     <br />
