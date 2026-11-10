@@ -15,12 +15,17 @@ class FolioReport(models.AbstractModel):
     def _get_folio_data(self, date_start, date_end):
         total_amount = 0.0
         data_folio = []
-        folios = self.env["hotel.folio"].search(
+        # Confirmed folios with a stay in the period. The dates on the folio
+        # itself only default to its creation time: the stay is on the lines.
+        room_lines = self.env["hotel.folio.line"].search(
             [
-                ("checkin_date", ">=", date_start),
-                ("checkout_date", "<=", date_end),
-            ],
-            order="checkin_date, id",
+                ("folio_id.state", "=", "sale"),
+                ("checkin_date", "<", date_end),
+                ("checkout_date", ">", date_start),
+            ]
+        )
+        folios = room_lines.folio_id.sorted(
+            lambda folio: (min(folio.room_line_ids.mapped("checkin_date")), folio.id)
         )
         for folio in folios:
             room_lines = folio.room_line_ids

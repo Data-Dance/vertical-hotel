@@ -281,19 +281,59 @@ class TestHotel(TransactionCase):
     # Report ---------------------------------------------------------------
 
     def test_report_folio_data(self):
-        empty_folio = self._create_folio()
-        self._add_room_line(self.hotel_folio, self.room)
-        data = self.env["report.vertical_hotel.report_hotel_folio"]._get_folio_data(
-            self.checkin_date - timedelta(days=5),
-            self.checkout_date + timedelta(days=5),
+        """Confirmed folios whose stay overlaps the period, whatever the
+        dates on the folio header (creation time by default)."""
+        report = self.env["report.vertical_hotel.report_hotel_folio"]
+        draft_folio = self._create_folio()
+        self._add_room_line(draft_folio, self._create_room("Draft Room"))
+        cancelled_folio = self._create_folio()
+        self._add_room_line(cancelled_folio, self._create_room("Cancelled Room"))
+        cancelled_folio.action_cancel()
+        later_folio = self._create_folio()
+        self._add_room_line(
+            later_folio,
+            self._create_room("Later Room"),
+            checkin=self.checkin_date + timedelta(days=30),
+            checkout=self.checkout_date + timedelta(days=30),
         )
-        rows = {row["name"]: row for row in data if "name" in row}
-        self.assertEqual(rows[self.hotel_folio.name]["checkin"], self.checkin_date)
-        self.assertEqual(rows[self.hotel_folio.name]["checkout"], self.checkout_date)
-        self.assertIn(empty_folio.name, rows)
+        later_folio.action_confirm()
+        self._add_room_line(self.hotel_folio, self.room)
+        self.hotel_folio.action_confirm()
+
+        def rows(date_start, date_end):
+            data = report._get_folio_data(date_start, date_end)
+            self.assertEqual(
+                data[-1]["total_amount"],
+                sum(row["amount"] for row in data[:-1]),
+            )
+            return {row["name"]: row for row in data[:-1]}
+
+        # the period starts after the folios were created, and ends in the
+        # middle of the stay
+        found = rows(
+            self.checkin_date - timedelta(hours=1),
+            self.checkin_date + timedelta(days=1),
+        )
+        self.assertEqual(list(found), [self.hotel_folio.name])
+        row = found[self.hotel_folio.name]
+        self.assertEqual(row["checkin"], self.checkin_date)
+        self.assertEqual(row["checkout"], self.checkout_date)
+        self.assertEqual(row["amount"], self.hotel_folio.amount_total)
+        # the folio header dates do not select anything
+        self.assertFalse(
+            rows(
+                self.hotel_folio.checkin_date - timedelta(hours=1),
+                self.hotel_folio.checkout_date - timedelta(hours=1),
+            )
+        )
         self.assertEqual(
-            data[-1]["total_amount"],
-            sum(row["amount"] for row in rows.values()),
+            list(
+                rows(
+                    self.checkin_date - timedelta(days=5),
+                    self.checkout_date + timedelta(days=40),
+                )
+            ),
+            [self.hotel_folio.name, later_folio.name],
         )
 
     def test_report_wizard(self):
