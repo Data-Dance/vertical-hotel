@@ -297,6 +297,44 @@ class TestReservation(common.TransactionCase):
         # several reserved folio lines at once
         reservation.folio_id.room_line_ids.write({"name": "Renamed"})
 
+    def test_folio_line_edit_moves_booking(self):
+        """The room booking of the reservation follows the folio line, also
+        after the stay dates of the folio have been changed."""
+        reservation = self._reservation()
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        folio = reservation.folio_id
+        folio.write({"checkout_date": self.base + timedelta(days=4)})
+        new_checkout = self.base + timedelta(days=3)
+        folio.room_line_ids.write({"checkout_date": new_checkout})
+        booking = self.env["hotel.room.reservation.line"].search(
+            [("reservation_id", "=", reservation.id)]
+        )
+        self.assertEqual(booking.check_out, new_checkout)
+        folio.room_line_ids.write({"product_id": self.room2.product_id.id})
+        self.assertEqual(booking.room_id, self.room2)
+        self.assertEqual(booking.check_out, new_checkout)
+        # the first room can be reserved again
+        self._reservation().confirmed_reservation()
+
+    def test_folio_cancel_frees_rooms(self):
+        """Cancelling the folio cancels its reservation and gives the rooms
+        back."""
+        reservation = self._reservation()
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        reservation.folio_id.action_cancel()
+        self.assertEqual(reservation.folio_id.state, "cancel")
+        self.assertEqual(reservation.state, "cancel")
+        self.assertFalse(
+            self.env["hotel.room.reservation.line"].search(
+                [("reservation_id", "=", reservation.id)]
+            )
+        )
+        again = self._reservation()
+        again.confirmed_reservation()
+        self.assertEqual(again.state, "confirm")
+
     def test_folio_room_choice(self):
         reservation = self._reservation()
         reservation.confirmed_reservation()

@@ -42,6 +42,7 @@ class HotelFolioLine(models.Model):
             for line in self.filtered(
                 lambda line: (
                     line.is_reserved
+                    and line.folio_id.reservation_id
                     and line.product_id
                     and line.checkin_date
                     and line.checkout_date
@@ -55,11 +56,12 @@ class HotelFolioLine(models.Model):
                     limit=1,
                 )
                 if old_room and new_room:
+                    # by reservation and room: the dates of the booking may
+                    # have followed the stay dates of the folio
                     reservation_line_obj.search(
                         [
+                            ("reservation_id", "=", line.folio_id.reservation_id.id),
                             ("room_id", "=", old_room.id),
-                            ("check_in", "=", line.checkin_date),
-                            ("check_out", "=", line.checkout_date),
                         ]
                     ).write(
                         {
