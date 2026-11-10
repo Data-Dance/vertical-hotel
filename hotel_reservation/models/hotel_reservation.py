@@ -424,7 +424,6 @@ class HotelReservation(models.Model):
                                 "checkout_date": reservation.checkout,
                                 "product_id": room.product_id.id,
                                 "name": reservation.reservation_no,
-                                "price_unit": room.list_price,
                                 "product_uom_qty": duration,
                                 "is_reserved": True,
                             }

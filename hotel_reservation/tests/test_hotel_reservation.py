@@ -207,6 +207,26 @@ class TestReservation(common.TransactionCase):
         action = reservation.open_folio_view()
         self.assertEqual(action["res_id"], folios.id)
 
+    def test_create_folio_uses_reservation_pricelist(self):
+        self.pricelist.item_ids = [
+            Command.create(
+                {"applied_on": "3_global", "compute_price": "fixed", "fixed_price": 50}
+            )
+        ]
+        reservation = self._reservation()
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        folio = reservation.folio_id
+        self.assertEqual(folio.pricelist_id, self.pricelist)
+        self.assertEqual(folio.room_line_ids.price_unit, 50.0)
+        self.assertEqual(folio.amount_untaxed, 100.0)
+
+    def test_create_folio_without_pricelist_rule(self):
+        reservation = self._reservation(self.room2)
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        self.assertEqual(reservation.folio_id.room_line_ids.price_unit, 120.0)
+
     def test_create_folio_multi(self):
         first = self._reservation(self.room)
         second = self._reservation(self.room2)
