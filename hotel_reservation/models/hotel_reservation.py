@@ -214,15 +214,30 @@ class HotelReservation(models.Model):
         for reservation in self:
             if not (reservation.checkout and reservation.checkin):
                 continue
-            # Compare days, not exact timestamps: date_order is stamped at
-            # creation time, so a same-day check-in is valid (walk-in guest).
-            if reservation.checkin.date() < reservation.date_order.date():
-                raise ValidationError(
-                    self.env._("Check-in date should be greater than the current date.")
-                )
             if reservation.checkout < reservation.checkin:
                 raise ValidationError(
                     self.env._("Check-out date should be greater than Check-in date.")
+                )
+
+    @api.constrains("checkin")
+    def _check_checkin_not_in_past(self):
+        """A stay does not start before the day it is booked, unless a hotel
+        manager says so (back-dated correction). Only a new check-in is
+        checked: the rest of a back-dated reservation stays editable."""
+        if self.env.user.has_group("vertical_hotel.group_hotel_manager"):
+            return
+        for reservation in self.filtered("checkin"):
+            # Compare days, not exact timestamps: date_order is stamped at
+            # creation time, so a same-day check-in is valid (walk-in guest).
+            # The days are those of the hotel, not of UTC.
+            hotel_tz = ZoneInfo(reservation._get_hotel_tz_name())
+            checkin, date_order = (
+                value.replace(tzinfo=UTC).astimezone(hotel_tz).date()
+                for value in (reservation.checkin, reservation.date_order)
+            )
+            if checkin < date_order:
+                raise ValidationError(
+                    self.env._("Check-in date should be greater than the current date.")
                 )
 
     @api.onchange("partner_id")

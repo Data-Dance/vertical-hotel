@@ -59,7 +59,9 @@ class TestReservation(common.TransactionCase):
             }
         )
 
-    def _reservation(self, rooms=None, start=0, nights=2, lines=None, **vals):
+    def _reservation(
+        self, rooms=None, start=0, nights=2, lines=None, user=None, **vals
+    ):
         rooms = self.room if rooms is None else rooms
         lines = lines or [rooms]
         values = {
@@ -79,7 +81,11 @@ class TestReservation(common.TransactionCase):
             ],
         }
         values.update(vals)
-        return self.env["hotel.reservation"].create(values)
+        return (
+            self.env["hotel.reservation"]
+            .with_user(user or self.env.user)
+            .create(values)
+        )
 
     # Workflow
 
@@ -266,6 +272,41 @@ class TestReservation(common.TransactionCase):
             self._reservation(nights=-1)
         first, second = self._reservation(), self._reservation(start=3)
         (first | second).write({"checkout": self.base + timedelta(days=8)})
+
+    def test_checkin_day_is_the_hotel_day(self):
+        """A check-in earlier today is fine, "today" being the hotel's day;
+        before that, only a manager may enter it."""
+        self.company.partner_id.tz = "Europe/Rome"  # UTC+2 in June
+        to_datetime = fields.Datetime.to_datetime
+        checkout = to_datetime("2027-06-12 08:00:00")
+        with freeze_time("2027-06-11 07:00:00"):  # 09:00 at the hotel
+            # 00:30 today at the hotel, yesterday in UTC
+            walk_in = self._reservation(
+                user=self.hotel_user,
+                checkin=to_datetime("2027-06-10 22:30:00"),
+                checkout=checkout,
+            )
+            # 23:30 yesterday at the hotel
+            with self.assertRaises(ValidationError):
+                walk_in.checkin = to_datetime("2027-06-10 21:30:00")
+            with self.assertRaises(ValidationError):
+                self._reservation(
+                    self.room2,
+                    user=self.hotel_user,
+                    checkin=to_datetime("2027-06-08 12:00:00"),
+                    checkout=checkout,
+                )
+            # the admin running the tests is a hotel manager
+            back_dated = self._reservation(
+                self.room2,
+                checkin=to_datetime("2027-06-08 12:00:00"),
+                checkout=checkout,
+            )
+            # the front desk goes on working with the back-dated reservation
+            back_dated = back_dated.with_user(self.hotel_user)
+            back_dated.checkout = to_datetime("2027-06-13 08:00:00")
+            back_dated.confirmed_reservation()
+            self.assertEqual(back_dated.state, "confirm")
 
     def test_copy(self):
         reservation = self._reservation()
