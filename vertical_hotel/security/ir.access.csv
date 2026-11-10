@@ -5,6 +5,7 @@ access_product_category,product.category.user,product.category,vertical_hotel.gr
 access_product_category_manager,product.category.manager,product.category,vertical_hotel.group_hotel_manager,crud,
 access_hotel_room_type,hotel.room_type.user,hotel.room.type,vertical_hotel.group_hotel_user,cru,
 access_hotel_room_type_manager,hotel.room_type.manager,hotel.room.type,vertical_hotel.group_hotel_manager,crud,
+access_product_template,product.template.user,product.template,vertical_hotel.group_hotel_user,cru,
 access_product_product,product.product.user,product.product,vertical_hotel.group_hotel_user,cru,
 access_product_product_manager,product.product.manager,product.product,vertical_hotel.group_hotel_manager,crud,
 access_hotel_room_amenities_type,hotel.room_amenities_type.user,hotel.room.amenities.type,vertical_hotel.group_hotel_user,cru,

@@ -338,6 +338,39 @@ class TestHotelSecurity(TransactionCase):
         with self.assertRaises(AccessError):
             folio.unlink()
 
+    def test_hotel_user_can_add_room_line(self):
+        """Adding a room flags it as taken, which writes on hotel.room and so
+        on its product and product template."""
+        room = self.env["hotel.room"].create(
+            {
+                "name": "Security Room",
+                "list_price": 100.0,
+                "capacity": 2,
+                "room_categ_id": self.env["hotel.room.type"]
+                .create({"name": "Security Room Type"})
+                .id,
+            }
+        )
+        checkin = fields.Datetime.now().replace(microsecond=0) + timedelta(days=1)
+        folio = (
+            self.env["hotel.folio"]
+            .with_user(self.hotel_user)
+            .create(
+                {"partner_id": self.env["res.partner"].create({"name": "Guest"}).id}
+            )
+        )
+        self.env["hotel.folio.line"].with_user(self.hotel_user).create(
+            {
+                "folio_id": folio.id,
+                "product_id": room.product_id.id,
+                "checkin_date": checkin,
+                "checkout_date": checkin + timedelta(days=2),
+                "product_uom_qty": 2.0,
+            }
+        )
+        self.assertEqual(folio.room_line_ids.product_id, room.product_id)
+        self.assertFalse(room.isroom)
+
     def test_internal_user_has_no_hotel_access(self):
         with self.assertRaises(AccessError):
             self.env["hotel.folio"].with_user(self.internal_user).search([])
