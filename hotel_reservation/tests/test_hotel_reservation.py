@@ -124,6 +124,72 @@ class TestReservation(common.TransactionCase):
         with self.assertRaises(ValidationError):
             self._reservation(start=1).confirmed_reservation()
 
+    def test_confirm_locks_rooms(self):
+        """The rooms are locked before their availability is checked, so
+        that two confirmations cannot both find a room free."""
+        calls = []
+        HotelRoom = self.registry["hotel.room"]
+        lock, booked = HotelRoom._lock_for_booking, HotelRoom._get_booked_rooms
+
+        def spy_lock(rooms):
+            calls.append(("lock", rooms))
+            return lock(rooms)
+
+        def spy_booked(rooms, *args, **kwargs):
+            calls.append(("check", rooms))
+            return booked(rooms, *args, **kwargs)
+
+        self.patch(HotelRoom, "_lock_for_booking", spy_lock)
+        self.patch(HotelRoom, "_get_booked_rooms", spy_booked)
+        reservation = self._reservation(self.room | self.room2)
+        calls.clear()
+        reservation.confirmed_reservation()
+        self.assertEqual(calls[0], ("lock", self.room | self.room2))
+        self.assertEqual(calls[1][0], "check")
+
+    def _walk_in_folio(self, room, start=0, nights=2, **vals):
+        checkin = self.base + timedelta(days=start)
+        checkout = checkin + timedelta(days=nights)
+        return self.env["hotel.folio"].create(
+            {
+                "partner_id": self.partner.id,
+                "pricelist_id": self.pricelist.id,
+                "checkin_date": checkin,
+                "checkout_date": checkout,
+                "room_line_ids": [
+                    Command.create(
+                        {
+                            "product_id": room.product_id.id,
+                            "checkin_date": checkin,
+                            "checkout_date": checkout,
+                            "product_uom_qty": nights,
+                        }
+                    )
+                ],
+                **vals,
+            }
+        )
+
+    def test_folio_overlap_with_reservation(self):
+        """A folio cannot take a room that a confirmed reservation holds."""
+        draft = self._reservation(self.room2)
+        reservation = self._reservation()
+        reservation.confirmed_reservation()
+        with self.assertRaises(ValidationError) as error:
+            self._walk_in_folio(self.room, start=1)
+        self.assertIn(self.room.name, str(error.exception))
+        self.assertIn(reservation.reservation_no, str(error.exception))
+        # a draft reservation holds nothing; neither does a stay that ends
+        # when the folio starts
+        self._walk_in_folio(self.room2, start=1)
+        self._walk_in_folio(self.room, start=2)
+        self.assertEqual(draft.state, "draft")
+        # the folio of the reservation itself is not a double booking
+        reservation.create_folio()
+        self.assertEqual(
+            reservation.folio_id.room_line_ids.product_id.name, "Test Single-101"
+        )
+
     def test_room_occupied_during_stay(self):
         reservation = self._reservation(
             date_order=fields.Datetime.now() - timedelta(days=3),

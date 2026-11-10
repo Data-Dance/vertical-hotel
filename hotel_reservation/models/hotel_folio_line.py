@@ -7,6 +7,30 @@ from odoo import models
 class HotelFolioLine(models.Model):
     _inherit = "hotel.folio.line"
 
+    def _get_room_holder(self, room):
+        """A confirmed reservation holds its rooms too, except against the
+        folio created from it."""
+        holder = super()._get_room_holder(room)
+        if holder:
+            return holder
+        booking = (
+            self.env["hotel.room.reservation.line"]
+            .sudo()
+            .search(
+                [
+                    ("room_id", "=", room.id),
+                    ("status", "=", "confirm"),
+                    ("reservation_id", "!=", self.folio_id.reservation_id.id),
+                    ("check_in", "<", self.checkout_date),
+                    ("check_out", ">", self.checkin_date),
+                ],
+                limit=1,
+            )
+        )
+        if booking:
+            return self.env._("reservation %s", booking.reservation_id.reservation_no)
+        return False
+
     def write(self, vals):
         """
         Overrides ORM write method to update Hotel Room Reservation line history.
