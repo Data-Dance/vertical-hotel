@@ -116,7 +116,9 @@ class HotelHousekeeping(models.Model):
         ---------------------------------------
         @param self: object pointer
         """
-        self._set_state("dirty", {"quality": False})
+        # The room is cleaned again: a previous inspection no longer counts,
+        # and its time would refuse any cleaning that ends after it.
+        self._set_state("dirty", {"quality": False, "inspect_date_time": False})
         self.activity_line_ids.write({"is_clean": False, "is_dirty": True})
 
     def room_cancel(self):

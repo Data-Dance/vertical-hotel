@@ -157,6 +157,29 @@ class TestHousekeeping(common.TransactionCase):
         self.assertTrue(self.hotel_activity.is_dirty)
         self.assertFalse(self.hotel_activity.is_clean)
 
+    def test_failed_inspection_can_be_cleaned_again(self):
+        # cleaned 08:00-09:30, inspected at 12:00: not good enough
+        self.housekeeping.room_clean()
+        self.housekeeping.action_set_to_dirty()
+        self.assertFalse(self.housekeeping.inspect_date_time)
+        # second cleaning, after the failed inspection
+        self.hotel_act_obj.create(
+            {
+                "housekeeping_id": self.housekeeping.id,
+                "today_date": "2026-10-10",
+                "activity_id": self.activity.id,
+                "housekeeper_id": self.housekeeper_id.id,
+                "clean_start_time": "2026-10-10 13:00:00",
+                "clean_end_time": "2026-10-10 14:00:00",
+            }
+        )
+        self.housekeeping.room_clean()
+        self.housekeeping.write(
+            {"quality": "good", "inspect_date_time": "2026-10-10 15:00:00"}
+        )
+        self.housekeeping.room_done()
+        self.assertEqual(self.housekeeping.state, "done")
+
     def test_room_cancel(self):
         self.housekeeping.room_cancel()
         self.assertEqual(self.housekeeping.state, "cancel")
