@@ -117,6 +117,10 @@
                                     <field name="product_uom_qty" string="Duration" />
                                     <field name="price_unit" />
                                     <field
+                                        name="technical_price_unit"
+                                        column_invisible="1"
+                                    />
+                                    <field
                                         name="tax_ids"
                                         widget="many2many_tags"
                                         options="{'no_create': True}"
@@ -171,6 +175,10 @@
                                         groups="uom.group_uom"
                                     />
                                     <field name="price_unit" />
+                                    <field
+                                        name="technical_price_unit"
+                                        column_invisible="1"
+                                    />
                                     <field
                                         name="tax_ids"
                                         widget="many2many_tags"

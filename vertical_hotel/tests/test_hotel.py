@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from odoo import fields
 from odoo.exceptions import AccessError, ValidationError
+from odoo.fields import Command
 from odoo.tests import Form, TransactionCase, new_test_user, tagged
 
 
@@ -254,6 +255,107 @@ class TestHotel(TransactionCase):
         service_line._on_change_checkin_checkout_dates()
         self.assertEqual(service_line.ser_checkout_date, self.checkin_date)
         self.assertEqual(service_line.product_uom_qty, 1)
+
+    # Prices ---------------------------------------------------------------
+
+    def _pricelist(self, **rule):
+        return self.env["product.pricelist"].create(
+            {
+                "name": "Test Hotel Pricelist",
+                "item_ids": [Command.create({"applied_on": "3_global", **rule})],
+            }
+        )
+
+    def _fill_folio_form(self, folio, room_price=None):
+        """Add a room and a service to the folio the way the form does."""
+        service = self.env["product.product"].create(
+            {"name": "Test Laundry", "list_price": 40.0, "isservice": True}
+        )
+        with Form(folio) as folio_form:
+            with folio_form.room_line_ids.new() as line:
+                line.checkin_date = self.checkin_date
+                line.checkout_date = self.checkout_date
+                line.product_id = self.room.product_id
+                if room_price:
+                    line.price_unit = room_price
+            with folio_form.service_line_ids.new() as line:
+                line.product_id = service
+        return folio.room_line_ids, folio.service_line_ids
+
+    def test_price_from_fixed_pricelist(self):
+        self.hotel_folio.pricelist_id = self._pricelist(
+            compute_price="fixed", fixed_price=50.0
+        )
+        room_line, service_line = self._fill_folio_form(self.hotel_folio)
+        self.assertEqual(room_line.price_unit, 50.0)
+        self.assertEqual(room_line.price_subtotal, 100.0)
+        self.assertEqual(service_line.price_unit, 50.0)
+        # and without the form
+        line = self._add_room_line(self.hotel_folio, self._create_room("Test Room 2"))
+        self.assertEqual(line.price_unit, 50.0)
+        line._onchange_product_id_warning()
+        self.assertEqual(line.price_unit, 50.0)
+
+    def test_price_from_discount_pricelist(self):
+        self.hotel_folio.pricelist_id = self._pricelist(
+            compute_price="discount", price_discount=20.0
+        )
+        room_line, service_line = self._fill_folio_form(self.hotel_folio)
+        # shown as a lower price or as a discount, depending on the settings
+        self.assertEqual(room_line.price_subtotal, 2 * 80.0)
+        self.assertEqual(
+            service_line.price_subtotal, service_line.product_uom_qty * 32.0
+        )
+
+    def test_price_from_discount_pricelist_shown_as_discount(self):
+        self.env.ref("base.group_user").implied_ids |= self.env.ref(
+            "sale.group_discount_per_so_line"
+        )
+        self.hotel_folio.pricelist_id = self._pricelist(
+            compute_price="discount", price_discount=20.0
+        )
+        room_line, _service_line = self._fill_folio_form(self.hotel_folio)
+        self.assertEqual(room_line.price_unit, 100.0)
+        self.assertEqual(room_line.discount, 20.0)
+        self.assertEqual(room_line.price_subtotal, 2 * 80.0)
+
+    def test_price_on_a_new_folio(self):
+        """The pricelist applies before the folio is saved, too."""
+        pricelist = self._pricelist(compute_price="fixed", fixed_price=50.0)
+        with Form(self.env["hotel.folio"]) as folio_form:
+            folio_form.partner_id = self.partner
+            folio_form.pricelist_id = pricelist
+            with folio_form.room_line_ids.new() as line:
+                line.checkin_date = self.checkin_date
+                line.checkout_date = self.checkout_date
+                line.product_id = self.room.product_id
+                self.assertEqual(line.price_unit, 50.0)
+        self.assertEqual(folio_form.record.room_line_ids.price_unit, 50.0)
+
+    def test_price_without_pricelist_rule(self):
+        self.hotel_folio.pricelist_id = self.env["product.pricelist"].create(
+            {"name": "Test Empty Pricelist"}
+        )
+        room_line, service_line = self._fill_folio_form(self.hotel_folio)
+        self.assertEqual(room_line.price_unit, 100.0)
+        self.assertEqual(service_line.price_unit, 40.0)
+
+    def test_price_typed_by_the_user_is_kept(self):
+        self.hotel_folio.pricelist_id = self._pricelist(
+            compute_price="fixed", fixed_price=50.0
+        )
+        room_line, _service_line = self._fill_folio_form(
+            self.hotel_folio, room_price=70.0
+        )
+        self.assertEqual(room_line.price_unit, 70.0)
+        # one more night: the typed price stays
+        with (
+            Form(self.hotel_folio) as folio_form,
+            folio_form.room_line_ids.edit(0) as line,
+        ):
+            line.checkout_date = self.checkout_date + timedelta(days=1)
+        self.assertEqual(room_line.product_uom_qty, 3)
+        self.assertEqual(room_line.price_unit, 70.0)
 
     # Workflow -------------------------------------------------------------
 

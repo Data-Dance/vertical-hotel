@@ -69,6 +69,13 @@ class HotelServiceLine(models.Model):
                 "tax_ids": self.order_id.fiscal_position_id.map_tax(taxes),
             }
         )
+        if self.folio_id:
+            # the price of the folio's pricelist rather than the list price
+            self.update(
+                self.folio_id._get_line_price_values(
+                    product, self.product_uom_qty, product.uom_id
+                )
+            )
         if product.sale_line_warn_msg:
             return {
                 "warning": {

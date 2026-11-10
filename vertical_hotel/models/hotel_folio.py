@@ -147,6 +147,26 @@ class HotelFolio(models.Model):
             vals.setdefault("name", sequence.next_by_code("hotel.folio"))
         return super().create(vals_list)
 
+    def _get_line_price_values(self, product, quantity, uom):
+        """Price of a room or service line of this folio, as sale computes
+        it for an order line: the price of the folio's pricelist, and the
+        discount when the pricelist shows one."""
+        self.ensure_one()
+        line = self.env["sale.order.line"].new(
+            {
+                "order_id": self.order_id.id,
+                "product_id": product.id,
+                "product_uom_qty": quantity,
+                "product_uom_id": uom.id,
+            }
+        )
+        return {
+            "price_unit": line.price_unit,
+            # what tells a computed price from one typed by the user
+            "technical_price_unit": line.technical_price_unit,
+            "discount": line.discount,
+        }
+
     @api.onchange("partner_id")
     def _onchange_partner_id(self):
         """
