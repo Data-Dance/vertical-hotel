@@ -1,7 +1,8 @@
 # Copyright (C) 2024-TODAY Serpent Consulting Services Pvt. Ltd. (<http://www.serpentcs.com>).
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
-from datetime import datetime, time, timedelta
+from datetime import UTC, timedelta
+from zoneinfo import ZoneInfo
 
 from odoo import api, fields, models
 from odoo.exceptions import UserError, ValidationError
@@ -123,6 +124,11 @@ class HotelReservation(models.Model):
         "invoice_id",
     )
     no_of_folio = fields.Integer("No. Folio", compute="_compute_folio_count")
+    reminder_sent = fields.Boolean(
+        readonly=True,
+        copy=False,
+        help="The reminder email for the current arrival date has been sent.",
+    )
 
     @api.depends("folio_id")
     def _compute_folio_count(self):
@@ -153,6 +159,9 @@ class HotelReservation(models.Model):
             rec.total_guest = adults + children
 
     def write(self, vals):
+        if "checkin" in vals and "reminder_sent" not in vals:
+            # another arrival date: the guest is reminded of that one
+            vals = dict(vals, reminder_sent=False)
         res = super().write(vals)
         if vals.get("partner_id"):
             # Guests are filed under whoever is booking; if that changes,
@@ -363,19 +372,28 @@ class HotelReservation(models.Model):
         template = self.env.ref(
             "hotel_reservation.mail_template_reservation_reminder_24hrs"
         )
-        tomorrow = datetime.combine(
-            fields.Date.context_today(self) + timedelta(days=1), time.min
-        )
+        now = fields.Datetime.now()
+        # Tomorrow, in any timezone, lies within the next 48 hours.
         reservations = self.search(
             [
                 ("state", "=", "confirm"),
-                ("checkin", ">=", tomorrow),
-                ("checkin", "<", tomorrow + timedelta(days=1)),
+                ("reminder_sent", "=", False),
+                ("checkin", ">", now),
+                ("checkin", "<", now + timedelta(days=2)),
                 ("partner_id.email", "!=", False),
             ]
         )
         for reservation in reservations:
+            # the day of arrival as the hotel and the guest see it
+            hotel_tz = ZoneInfo(reservation._get_hotel_tz_name())
+            tomorrow = now.replace(tzinfo=UTC).astimezone(hotel_tz).date() + timedelta(
+                days=1
+            )
+            checkin = reservation.checkin.replace(tzinfo=UTC).astimezone(hotel_tz)
+            if checkin.date() != tomorrow:
+                continue
             template.send_mail(reservation.id)
+            reservation.reminder_sent = True
         return True
 
     def create_folio(self):

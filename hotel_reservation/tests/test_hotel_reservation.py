@@ -4,6 +4,8 @@
 from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from freezegun import freeze_time
+
 from odoo import fields
 from odoo.exceptions import UserError, ValidationError
 from odoo.fields import Command
@@ -335,6 +337,11 @@ class TestReservation(common.TransactionCase):
             for wrong in ("%Y", "$", "nbsp", "Childrens"):
                 self.assertNotIn(wrong, body, xmlid)
 
+    def _reminders(self, reservations):
+        return self.env["mail.mail"].search(
+            [("model", "=", "hotel.reservation"), ("res_id", "in", reservations.ids)]
+        )
+
     def test_reminder_24hrs(self):
         tomorrow = datetime.combine(fields.Date.today() + timedelta(days=1), time(14))
         due = self._reservation(checkin=tomorrow, checkout=tomorrow + timedelta(days=1))
@@ -344,10 +351,37 @@ class TestReservation(common.TransactionCase):
         )
         later = self._reservation(start=5)
         later.confirmed_reservation()
+        reservations = due | draft | later
         self.env["hotel.reservation"].reservation_reminder_24hrs()
-        mails = self.env["mail.mail"].search([("model", "=", "hotel.reservation")])
-        self.assertEqual(mails.mapped("res_id"), due.ids)
-        self.assertNotIn(draft.id, mails.mapped("res_id"))
+        self.assertEqual(self._reminders(reservations).mapped("res_id"), due.ids)
+        # running the job again the same day does not send it again
+        self.env["hotel.reservation"].reservation_reminder_24hrs()
+        self.assertEqual(len(self._reminders(reservations)), 1)
+        # the stay is moved: the guest is reminded of the new date
+        due.write({"checkout": tomorrow + timedelta(days=2)})
+        self.assertTrue(due.reminder_sent)
+        due.write({"checkin": tomorrow + timedelta(hours=1)})
+        self.assertFalse(due.reminder_sent)
+        self.env["hotel.reservation"].reservation_reminder_24hrs()
+        self.assertEqual(len(self._reminders(reservations)), 2)
+
+    def test_reminder_24hrs_hotel_timezone(self):
+        """Tomorrow is the hotel's tomorrow, not the one of the cron user."""
+        self.company.partner_id.tz = "Pacific/Auckland"  # UTC+12 in June
+        with freeze_time("2027-06-10 10:00:00"):  # 22:00 at the hotel
+            # 08:00 tomorrow at the hotel, still today in UTC
+            checkin = fields.Datetime.to_datetime("2027-06-10 20:00:00")
+            due = self._reservation(
+                checkin=checkin, checkout=checkin + timedelta(days=1)
+            )
+            # 02:00 the day after tomorrow at the hotel, tomorrow in UTC
+            checkin = fields.Datetime.to_datetime("2027-06-11 14:00:00")
+            not_due = self._reservation(
+                self.room2, checkin=checkin, checkout=checkin + timedelta(days=1)
+            )
+            (due | not_due).confirmed_reservation()
+            self.env["hotel.reservation"].reservation_reminder_24hrs()
+        self.assertEqual(self._reminders(due | not_due).mapped("res_id"), due.ids)
 
     # Room status cron
 
