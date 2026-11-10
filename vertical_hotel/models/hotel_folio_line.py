@@ -2,7 +2,9 @@
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
 
+from datetime import UTC
 from typing import ClassVar
+from zoneinfo import ZoneInfo
 
 from odoo import api, fields, models
 from odoo.exceptions import ValidationError
@@ -111,11 +113,29 @@ class HotelFolioLine(models.Model):
                         """less than the Check Out Date!"""
                     )
                 )
-            if (
-                rec.folio_id.date_order
-                and rec.checkin_date
-                and rec.checkin_date.date() < rec.folio_id.date_order.date()
-            ):
+
+    @api.constrains("checkin_date")
+    def _check_checkin_not_before_folio(self):
+        """A stay does not start before the day of its folio, unless a hotel
+        manager says so (back-dated correction). Days are those of the hotel,
+        not of UTC, and only a new check-in is checked: the rest of a
+        back-dated line stays editable."""
+        if self.env.context.get("hotel_v19_import") or self.env.user.has_group(
+            "vertical_hotel.group_hotel_manager"
+        ):
+            return
+        for rec in self:
+            if not (rec.folio_id.date_order and rec.checkin_date):
+                continue
+            folio = rec.folio_id
+            hotel_tz = ZoneInfo(
+                folio.company_id.partner_id.tz or folio.create_uid.tz or "UTC"
+            )
+            checkin, date_order = (
+                value.replace(tzinfo=UTC).astimezone(hotel_tz).date()
+                for value in (rec.checkin_date, rec.folio_id.date_order)
+            )
+            if checkin < date_order:
                 raise ValidationError(
                     rec.env._(
                         """Room line check in date should be """

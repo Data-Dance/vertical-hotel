@@ -3,6 +3,8 @@
 
 from datetime import timedelta
 
+from freezegun import freeze_time
+
 from odoo import fields
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import Form, TransactionCase, new_test_user, tagged
@@ -356,6 +358,9 @@ class TestHotelSecurity(TransactionCase):
         cls.hotel_user = new_test_user(
             cls.env, login="hotel_user", groups="vertical_hotel.group_hotel_user"
         )
+        cls.hotel_manager = new_test_user(
+            cls.env, login="hotel_manager", groups="vertical_hotel.group_hotel_manager"
+        )
         cls.internal_user = new_test_user(
             cls.env, login="plain_user", groups="base.group_user"
         )
@@ -465,6 +470,57 @@ class TestHotelSecurity(TransactionCase):
         with self.assertRaises(UserError):
             service_line.unlink()
         self.assertEqual(len(folio.order_id.order_line), 2)
+
+    def test_checkin_day_is_the_hotel_day(self):
+        """A check-in earlier today is fine, "today" being the hotel's day;
+        before that, only a manager may enter it."""
+        self.env.company.partner_id.tz = "Europe/Rome"  # UTC+2 in June
+        room = self.env["hotel.room"].create(
+            {
+                "name": "Security Room",
+                "list_price": 100.0,
+                "capacity": 2,
+                "room_categ_id": self.env["hotel.room.type"]
+                .create({"name": "Security Room Type"})
+                .id,
+            }
+        )
+        partner = self.env["res.partner"].create({"name": "Guest"})
+        to_datetime = fields.Datetime.to_datetime
+
+        def add_line(user, checkin):
+            folio = (
+                self.env["hotel.folio"]
+                .with_user(user)
+                .create({"partner_id": partner.id})
+            )
+            return (
+                self.env["hotel.folio.line"]
+                .with_user(user)
+                .create(
+                    {
+                        "folio_id": folio.id,
+                        "product_id": room.product_id.id,
+                        "checkin_date": to_datetime(checkin),
+                        "checkout_date": to_datetime("2027-06-12 08:00:00"),
+                    }
+                )
+            )
+
+        with freeze_time("2027-06-11 07:00:00"):  # 09:00 at the hotel
+            # 00:30 today at the hotel, yesterday in UTC
+            line = add_line(self.hotel_user, "2027-06-10 22:30:00")
+            # 23:30 yesterday at the hotel
+            with self.assertRaises(ValidationError):
+                line.checkin_date = to_datetime("2027-06-10 21:30:00")
+            line.unlink()
+            with self.assertRaises(ValidationError):
+                add_line(self.hotel_user, "2027-06-10 21:30:00")
+            line = add_line(self.hotel_manager, "2027-06-08 12:00:00")
+            # the front desk goes on working with the back-dated line
+            line.with_user(self.hotel_user).checkout_date = to_datetime(
+                "2027-06-13 08:00:00"
+            )
 
     def test_internal_user_has_no_hotel_access(self):
         with self.assertRaises(AccessError):
