@@ -134,6 +134,80 @@ class TestHotel(TransactionCase):
         result = folio_line._onchange_product_id_warning()
         self.assertEqual(result["warning"]["message"], "Room under maintenance")
 
+    def test_stay_nights_rule(self):
+        """Whole days, plus one for a remainder reaching the additional hours;
+        never two for the same partial day, never less than one night."""
+        company = self.env.company
+        checkin = self.checkin_date.replace(hour=14, minute=0, second=0)
+        cases = [
+            # (hours of stay, additional hours, nights)
+            (21, 0, 1),
+            (21, 2, 1),
+            (21, 21, 1),
+            (21, 22, 1),
+            (45, 0, 2),
+            (45, 2, 2),
+            (30, 4, 2),
+            (30, 8, 1),
+            (48, 0, 2),
+            (48, 2, 2),
+        ]
+        for hours, additional_hours, nights in cases:
+            company.additional_hours = additional_hours
+            with self.subTest(hours=hours, additional_hours=additional_hours):
+                self.assertEqual(
+                    company._get_hotel_stay_nights(
+                        checkin, checkin + timedelta(hours=hours)
+                    ),
+                    nights,
+                )
+        self.assertEqual(company._get_hotel_stay_nights(checkin, False), 0)
+
+    def test_folio_line_dates_onchange(self):
+        """14:00 to 11:00 the next day is one night, whatever the setting."""
+        checkin = self.checkin_date.replace(hour=14, minute=0, second=0)
+        for additional_hours in (0, 2):
+            self.env.company.additional_hours = additional_hours
+            line = self.env["hotel.folio.line"].new(
+                {
+                    "folio_id": self.hotel_folio.id,
+                    "product_id": self.room.product_id.id,
+                    "checkin_date": checkin,
+                    "checkout_date": checkin + timedelta(hours=21),
+                }
+            )
+            line._onchange_checkin_checkout_dates()
+            self.assertEqual(line.product_uom_qty, 1)
+
+    def test_folio_line_quantity_without_onchange(self):
+        """A line created or re-dated outside the form bills its nights."""
+        line = self.env["hotel.folio.line"].create(
+            {
+                "folio_id": self.hotel_folio.id,
+                "product_id": self.room.product_id.id,
+                "checkin_date": self.checkin_date,
+                "checkout_date": self.checkin_date + timedelta(days=5),
+            }
+        )
+        self.assertEqual(line.product_uom_qty, 5)
+        self.assertEqual(line.price_subtotal, 500)
+        line.write({"checkout_date": self.checkin_date + timedelta(days=3)})
+        self.assertEqual(line.product_uom_qty, 3)
+        # a quantity given with the dates is kept
+        line.write(
+            {
+                "checkout_date": self.checkin_date + timedelta(days=4),
+                "product_uom_qty": 1,
+            }
+        )
+        self.assertEqual(line.product_uom_qty, 1)
+        line = self._add_room_line(
+            self.hotel_folio,
+            self._create_room("Test Room 2"),
+            checkout=self.checkin_date + timedelta(days=5),
+        )
+        self.assertEqual(line.product_uom_qty, 2)
+
     def test_service_line_onchange_product_id(self):
         """Service line onchange fills the sale.order.line fields."""
         service = self.env["product.product"].create(

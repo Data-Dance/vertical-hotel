@@ -77,15 +77,36 @@ class HotelFolioLine(models.Model):
         Folio = self.env["hotel.folio"]
         for vals in vals_list:
             folio_id = vals.get("folio_id")
+            folio = Folio
             if folio_id:
-                folio = Folio.browse(folio_id)
-                if folio.exists():
+                folio = Folio.browse(folio_id).exists()
+                if folio:
                     vals["order_id"] = folio.order_id.id
+            # The form sets the quantity through the onchange on the dates;
+            # do the same for a line created without it and without quantity.
+            if "product_uom_qty" not in vals:
+                nights = folio.warehouse_id.company_id._get_hotel_stay_nights(
+                    fields.Datetime.to_datetime(vals.get("checkin_date")),
+                    fields.Datetime.to_datetime(vals.get("checkout_date")),
+                )
+                if nights:
+                    vals["product_uom_qty"] = nights
 
         lines = super().create(vals_list)
         for line in lines:
             line._update_folio_line(line)
         return lines
+
+    def write(self, vals):
+        res = super().write(vals)
+        if (
+            "checkin_date" in vals or "checkout_date" in vals
+        ) and "product_uom_qty" not in vals:
+            for line in self:
+                nights = line._get_stay_nights()
+                if line.product_uom_qty != nights:
+                    line.product_uom_qty = nights
+        return res
 
     @api.constrains("product_id", "checkin_date", "checkout_date")
     def _check_folio_double_booking(self):
@@ -194,23 +215,12 @@ class HotelFolioLine(models.Model):
         @param self: object pointer
         """
 
-        configured_addition_hours = (
-            self.folio_id.warehouse_id.company_id.additional_hours
-        )
-        myduration = 0
-        if self.checkin_date and self.checkout_date:
-            dur = self.checkout_date - self.checkin_date
-            sec_dur = dur.seconds
-            if (not dur.days and not sec_dur) or (dur.days and not sec_dur):
-                myduration = dur.days
-            else:
-                myduration = dur.days + 1
-            #            To calculate additional hours in hotel room as per minutes
-            if configured_addition_hours > 0:
-                additional_hours = abs((dur.seconds / 60) / 60)
-                if additional_hours >= configured_addition_hours:
-                    myduration += 1
-        self.product_uom_qty = myduration
+        self.product_uom_qty = self._get_stay_nights()
+
+    def _get_stay_nights(self):
+        self.ensure_one()
+        company = self.folio_id.warehouse_id.company_id
+        return company._get_hotel_stay_nights(self.checkin_date, self.checkout_date)
 
     def copy_data(self, default=None):
         """
