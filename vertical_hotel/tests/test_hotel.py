@@ -258,6 +258,66 @@ class TestHotel(TransactionCase):
                 self.checkout_date + timedelta(hours=2),
             )
 
+    def test_double_booking_across_folios(self):
+        """A room cannot be on two folios for overlapping periods."""
+        self._add_room_line(self.hotel_folio, self.room)
+        other_folio = self._create_folio()
+        with self.assertRaises(ValidationError) as error:
+            self._add_room_line(
+                other_folio,
+                self.room,
+                self.checkin_date + timedelta(days=1),
+                self.checkout_date + timedelta(days=1),
+            )
+        self.assertIn(self.room.name, str(error.exception))
+        self.assertIn(self.hotel_folio.display_name, str(error.exception))
+        # leaving when the next guest arrives is not an overlap
+        line = self._add_room_line(
+            other_folio,
+            self.room,
+            self.checkout_date,
+            self.checkout_date + timedelta(days=1),
+        )
+        # ... but moving that stay onto the first one is
+        with self.assertRaises(ValidationError):
+            line.write({"checkin_date": self.checkout_date - timedelta(hours=1)})
+
+    def test_double_booking_cancelled_folio(self):
+        """A cancelled folio does not hold its rooms, and cannot be reopened
+        once somebody else has them."""
+        self._add_room_line(self.hotel_folio, self.room)
+        self.hotel_folio.action_cancel()
+        self._add_room_line(self._create_folio(), self.room)
+        with self.assertRaises(ValidationError):
+            self.hotel_folio.action_cancel_draft()
+
+    def test_double_booking_locks_room(self):
+        """The room is locked before its availability is checked, so that
+        two transactions cannot both find it free."""
+        calls = []
+        HotelRoom = self.registry["hotel.room"]
+        FolioLine = self.registry["hotel.folio.line"]
+        lock, holder = HotelRoom._lock_for_booking, FolioLine._get_room_holder
+
+        def spy_lock(rooms):
+            calls.append(("lock", rooms.ids))
+            return lock(rooms)
+
+        def spy_holder(line, room):
+            calls.append(("check", room.ids))
+            return holder(line, room)
+
+        self.patch(HotelRoom, "_lock_for_booking", spy_lock)
+        self.patch(FolioLine, "_get_room_holder", spy_holder)
+        with self.assertQueries(
+            ["UPDATE hotel_room SET write_date = write_date WHERE id IN %s"],
+            flush=False,
+        ):
+            self.room._lock_for_booking()
+        calls.clear()
+        self._add_room_line(self.hotel_folio, self.room)
+        self.assertEqual(calls, [("lock", self.room.ids), ("check", self.room.ids)])
+
     # Categories -----------------------------------------------------------
 
     def test_room_type_hierarchical_name_search(self):

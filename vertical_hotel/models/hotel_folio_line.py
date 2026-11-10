@@ -92,6 +92,61 @@ class HotelFolioLine(models.Model):
         if self.env.context.get("hotel_v19_import"):
             return
         self.folio_id._check_duplicate_folio_room_line()
+        self._check_room_availability()
+
+    def _get_room_holder(self, room):
+        """Name of another stay holding ``room`` during the stay of this
+        line, if there is one. A stay ending when this one starts, or
+        starting when it ends, does not hold the room."""
+        self.ensure_one()
+        other_line = self.sudo().search(
+            [
+                ("product_id", "=", room.product_id.id),
+                ("folio_id", "!=", False),
+                ("folio_id", "!=", self.folio_id.id),
+                ("folio_id.state", "!=", "cancel"),
+                ("checkin_date", "<", self.checkout_date),
+                ("checkout_date", ">", self.checkin_date),
+            ],
+            limit=1,
+        )
+        if other_line:
+            return self.env._("folio %s", other_line.folio_id.display_name)
+        return False
+
+    def _check_room_availability(self):
+        """Refuse a room that another folio holds for an overlapping period.
+
+        The rooms are locked first: two transactions booking the same room
+        cannot both find it free."""
+        lines = self.filtered(
+            lambda line: (
+                line.folio_id
+                and line.folio_id.state != "cancel"
+                and line.product_id
+                and line.checkin_date
+                and line.checkout_date
+            )
+        )
+        rooms = (
+            self.env["hotel.room"]
+            .sudo()
+            .search([("product_id", "in", lines.product_id.ids)], order="id")
+        )
+        rooms._lock_for_booking()
+        room_by_product = {room.product_id: room for room in rooms}
+        for line in lines:
+            room = room_by_product.get(line.product_id)
+            holder = room and line._get_room_holder(room)
+            if holder:
+                raise ValidationError(
+                    self.env._(
+                        "Room %(room)s is not available: %(holder)s holds it "
+                        "for an overlapping period.",
+                        room=room.name,
+                        holder=holder,
+                    )
+                )
 
     @api.constrains("checkin_date", "checkout_date")
     def _check_dates(self):
