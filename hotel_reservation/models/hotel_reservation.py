@@ -462,7 +462,6 @@ class HotelReservation(models.Model):
                                 "checkout_date": reservation.checkout,
                                 "product_id": room.product_id.id,
                                 "name": reservation.reservation_no,
-                                "price_unit": room.list_price,
                                 "product_uom_qty": duration,
                                 "is_reserved": True,
                             }
@@ -481,28 +480,15 @@ class HotelReservation(models.Model):
         self, checkin_date=False, checkout_date=False, duration=False
     ):
         """
-        This method gives the duration between check in checkout if
-        customer will leave only for some hour it would be considers
-        as a whole day. If customer will checkin checkout for more or equal
-        hours, which configured in company as additional hours than it would
-        be consider as full days
+        This method gives the duration between check in and check out,
+        in nights, as res.company._get_hotel_stay_nights counts them.
         --------------------------------------------------------------------
         @param self: object pointer
         @return: Duration and checkout_date
         """
-        # Same rule as hotel.folio.line._onchange_checkin_checkout_dates, so
-        # the folio created from the reservation keeps the same quantity when
-        # its dates are edited: whole days, a started day counts as a day.
-        configured_addition_hours = self.company_id.additional_hours
-        duration = 0
-        if checkin_date and checkout_date:
-            dur = checkout_date - checkin_date
-            duration = dur.days + 1 if dur.seconds else dur.days
-            if (
-                configured_addition_hours > 0
-                and dur.seconds / 3600 >= configured_addition_hours
-            ):
-                duration += 1
+        # Same rule as the folio line, so the folio created from the
+        # reservation keeps the same quantity when its dates are edited.
+        duration = self.company_id._get_hotel_stay_nights(checkin_date, checkout_date)
         return {"duration": duration}
 
     def open_folio_view(self):

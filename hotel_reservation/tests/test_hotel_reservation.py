@@ -216,6 +216,26 @@ class TestReservation(common.TransactionCase):
         action = reservation.open_folio_view()
         self.assertEqual(action["res_id"], folios.id)
 
+    def test_create_folio_uses_reservation_pricelist(self):
+        self.pricelist.item_ids = [
+            Command.create(
+                {"applied_on": "3_global", "compute_price": "fixed", "fixed_price": 50}
+            )
+        ]
+        reservation = self._reservation()
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        folio = reservation.folio_id
+        self.assertEqual(folio.pricelist_id, self.pricelist)
+        self.assertEqual(folio.room_line_ids.price_unit, 50.0)
+        self.assertEqual(folio.amount_untaxed, 100.0)
+
+    def test_create_folio_without_pricelist_rule(self):
+        reservation = self._reservation(self.room2)
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        self.assertEqual(reservation.folio_id.room_line_ids.price_unit, 120.0)
+
     def test_create_folio_multi(self):
         first = self._reservation(self.room)
         second = self._reservation(self.room2)
@@ -350,6 +370,23 @@ class TestReservation(common.TransactionCase):
             checkout_date=reservation.checkout + timedelta(hours=3),
         )["duration"]
         self.assertEqual(duration, 3)
+
+    def test_stay_nights_not_counted_twice(self):
+        """14:00 to 11:00 the next day is one night with additional hours
+        too, on the reservation and on the folio made from it."""
+        self.env.company.additional_hours = 2
+        checkin = self.base + timedelta(hours=2)
+        reservation = self._reservation(
+            checkin=checkin, checkout=checkin + timedelta(hours=21)
+        )
+        duration = reservation._onchange_check_dates(
+            checkin_date=reservation.checkin, checkout_date=reservation.checkout
+        )["duration"]
+        self.assertEqual(duration, 1)
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        self.assertEqual(reservation.folio_id.duration, 1)
+        self.assertEqual(reservation.folio_id.room_line_ids.product_uom_qty, 1)
 
     def test_send_reservation_mail(self):
         action = self._reservation().action_send_reservation_mail()

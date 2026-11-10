@@ -278,6 +278,16 @@ class TestHotelWebsiteBooking(HttpCase):
         self.assertIn("fewer rooms are free", response.text)
         self.assertFalse(self._request("late.guest@example.com"))
 
+    def test_quote_counts_one_night_per_night(self):
+        """Arriving at 14:00 and leaving at 11:00 is one night per night,
+        with the company's additional hours too."""
+        self.website.write({"hotel_checkin_hour": 14.0, "hotel_checkout_hour": 11.0})
+        self.website.company_id.additional_hours = 2
+        checkin_dt, checkout_dt = self.website._hotel_stay_datetimes(
+            self.checkin, self.checkout
+        )
+        self.assertEqual(self.website._hotel_stay_nights(checkin_dt, checkout_dt), 2)
+
     def test_past_dates_are_rejected(self):
         yesterday = fields.Date.to_string(
             self.website._hotel_today() - timedelta(days=1)
