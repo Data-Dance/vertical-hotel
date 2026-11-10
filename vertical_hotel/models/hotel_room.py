@@ -114,6 +114,21 @@ class HotelRoom(models.Model):
             vals.update({"color": 5, "status": "available"})
         return super().write(vals)
 
+    def _lock_for_booking(self):
+        """Serialise the transactions booking these rooms.
+
+        A booking is a search for an overlapping stay followed by an insert,
+        so two transactions could both find the room free. Updating the room
+        makes the second one wait for the first and then fail with a
+        serialisation error, which Odoo retries: the search then sees the
+        first booking. A row lock alone would not do, since the second
+        transaction would go on with a snapshot older than that booking."""
+        if self.ids:
+            self.env.cr.execute(
+                "UPDATE hotel_room SET write_date = write_date WHERE id IN %s",
+                [tuple(self.ids)],
+            )
+
     def set_room_status_occupied(self):
         """
         This method is used to change the state

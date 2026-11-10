@@ -270,5 +270,8 @@ class HotelFolio(models.Model):
         return action
 
     def action_cancel_draft(self):
-        """Reset cancelled folios to quotation."""
-        return self.order_id.action_draft()
+        """Reset cancelled folios to quotation, unless their rooms have been
+        taken in the meantime."""
+        res = self.order_id.action_draft()
+        self.room_line_ids._check_room_availability()
+        return res

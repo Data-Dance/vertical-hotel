@@ -133,6 +133,72 @@ class TestReservation(common.TransactionCase):
         with self.assertRaises(ValidationError):
             self._reservation(start=1).confirmed_reservation()
 
+    def test_confirm_locks_rooms(self):
+        """The rooms are locked before their availability is checked, so
+        that two confirmations cannot both find a room free."""
+        calls = []
+        HotelRoom = self.registry["hotel.room"]
+        lock, booked = HotelRoom._lock_for_booking, HotelRoom._get_booked_rooms
+
+        def spy_lock(rooms):
+            calls.append(("lock", rooms))
+            return lock(rooms)
+
+        def spy_booked(rooms, *args, **kwargs):
+            calls.append(("check", rooms))
+            return booked(rooms, *args, **kwargs)
+
+        self.patch(HotelRoom, "_lock_for_booking", spy_lock)
+        self.patch(HotelRoom, "_get_booked_rooms", spy_booked)
+        reservation = self._reservation(self.room | self.room2)
+        calls.clear()
+        reservation.confirmed_reservation()
+        self.assertEqual(calls[0], ("lock", self.room | self.room2))
+        self.assertEqual(calls[1][0], "check")
+
+    def _walk_in_folio(self, room, start=0, nights=2, **vals):
+        checkin = self.base + timedelta(days=start)
+        checkout = checkin + timedelta(days=nights)
+        return self.env["hotel.folio"].create(
+            {
+                "partner_id": self.partner.id,
+                "pricelist_id": self.pricelist.id,
+                "checkin_date": checkin,
+                "checkout_date": checkout,
+                "room_line_ids": [
+                    Command.create(
+                        {
+                            "product_id": room.product_id.id,
+                            "checkin_date": checkin,
+                            "checkout_date": checkout,
+                            "product_uom_qty": nights,
+                        }
+                    )
+                ],
+                **vals,
+            }
+        )
+
+    def test_folio_overlap_with_reservation(self):
+        """A folio cannot take a room that a confirmed reservation holds."""
+        draft = self._reservation(self.room2)
+        reservation = self._reservation()
+        reservation.confirmed_reservation()
+        with self.assertRaises(ValidationError) as error:
+            self._walk_in_folio(self.room, start=1)
+        self.assertIn(self.room.name, str(error.exception))
+        self.assertIn(reservation.reservation_no, str(error.exception))
+        # a draft reservation holds nothing; neither does a stay that ends
+        # when the folio starts
+        self._walk_in_folio(self.room2, start=1)
+        self._walk_in_folio(self.room, start=2)
+        self.assertEqual(draft.state, "draft")
+        # the folio of the reservation itself is not a double booking
+        reservation.create_folio()
+        self.assertEqual(
+            reservation.folio_id.room_line_ids.product_id.name, "Test Single-101"
+        )
+
     def test_room_occupied_during_stay(self):
         reservation = self._reservation(
             date_order=fields.Datetime.now() - timedelta(days=3),
@@ -259,6 +325,44 @@ class TestReservation(common.TransactionCase):
         self.assertEqual(booking.check_out, new_checkout)
         # several reserved folio lines at once
         reservation.folio_id.room_line_ids.write({"name": "Renamed"})
+
+    def test_folio_line_edit_moves_booking(self):
+        """The room booking of the reservation follows the folio line, also
+        after the stay dates of the folio have been changed."""
+        reservation = self._reservation()
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        folio = reservation.folio_id
+        folio.write({"checkout_date": self.base + timedelta(days=4)})
+        new_checkout = self.base + timedelta(days=3)
+        folio.room_line_ids.write({"checkout_date": new_checkout})
+        booking = self.env["hotel.room.reservation.line"].search(
+            [("reservation_id", "=", reservation.id)]
+        )
+        self.assertEqual(booking.check_out, new_checkout)
+        folio.room_line_ids.write({"product_id": self.room2.product_id.id})
+        self.assertEqual(booking.room_id, self.room2)
+        self.assertEqual(booking.check_out, new_checkout)
+        # the first room can be reserved again
+        self._reservation().confirmed_reservation()
+
+    def test_folio_cancel_frees_rooms(self):
+        """Cancelling the folio cancels its reservation and gives the rooms
+        back."""
+        reservation = self._reservation()
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        reservation.folio_id.action_cancel()
+        self.assertEqual(reservation.folio_id.state, "cancel")
+        self.assertEqual(reservation.state, "cancel")
+        self.assertFalse(
+            self.env["hotel.room.reservation.line"].search(
+                [("reservation_id", "=", reservation.id)]
+            )
+        )
+        again = self._reservation()
+        again.confirmed_reservation()
+        self.assertEqual(again.state, "confirm")
 
     def test_folio_room_choice(self):
         reservation = self._reservation()

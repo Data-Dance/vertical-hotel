@@ -12,6 +12,25 @@ class HotelFolio(models.Model):
         "hotel.reservation", ondelete="restrict", index=True
     )
 
+    def action_cancel(self):
+        """Cancel the reservation of the folios as well: its room bookings
+        would keep the rooms of the cancelled stay reserved for good."""
+        res = super().action_cancel()
+        reservations = self.filtered(
+            lambda folio: folio.state == "cancel"
+        ).reservation_id.filtered(lambda reservation: reservation.state == "done")
+        # not while another folio of the reservation still stands
+        reservations -= self.search(
+            [("reservation_id", "in", reservations.ids), ("state", "!=", "cancel")]
+        ).reservation_id
+        if reservations:
+            reservations.state = "cancel"
+            self.env["hotel.room.reservation.line"].search(
+                [("reservation_id", "in", reservations.ids)]
+            ).unlink()
+            reservations.reservation_line.reserve._update_room_status()
+        return res
+
     def write(self, vals):
         res = super().write(vals)
         if "checkin_date" in vals or "checkout_date" in vals:

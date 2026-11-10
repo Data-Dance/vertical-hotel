@@ -7,6 +7,30 @@ from odoo import models
 class HotelFolioLine(models.Model):
     _inherit = "hotel.folio.line"
 
+    def _get_room_holder(self, room):
+        """A confirmed reservation holds its rooms too, except against the
+        folio created from it."""
+        holder = super()._get_room_holder(room)
+        if holder:
+            return holder
+        booking = (
+            self.env["hotel.room.reservation.line"]
+            .sudo()
+            .search(
+                [
+                    ("room_id", "=", room.id),
+                    ("status", "=", "confirm"),
+                    ("reservation_id", "!=", self.folio_id.reservation_id.id),
+                    ("check_in", "<", self.checkout_date),
+                    ("check_out", ">", self.checkin_date),
+                ],
+                limit=1,
+            )
+        )
+        if booking:
+            return self.env._("reservation %s", booking.reservation_id.reservation_no)
+        return False
+
     def write(self, vals):
         """
         Overrides ORM write method to update Hotel Room Reservation line history.
@@ -18,6 +42,7 @@ class HotelFolioLine(models.Model):
             for line in self.filtered(
                 lambda line: (
                     line.is_reserved
+                    and line.folio_id.reservation_id
                     and line.product_id
                     and line.checkin_date
                     and line.checkout_date
@@ -31,11 +56,12 @@ class HotelFolioLine(models.Model):
                     limit=1,
                 )
                 if old_room and new_room:
+                    # by reservation and room: the dates of the booking may
+                    # have followed the stay dates of the folio
                     reservation_line_obj.search(
                         [
+                            ("reservation_id", "=", line.folio_id.reservation_id.id),
                             ("room_id", "=", old_room.id),
-                            ("check_in", "=", line.checkin_date),
-                            ("check_out", "=", line.checkout_date),
                         ]
                     ).write(
                         {

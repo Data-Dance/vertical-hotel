@@ -305,6 +305,8 @@ class HotelReservation(models.Model):
         # in self are already taken
         for reservation in self:
             rooms = reservation.reservation_line.reserve
+            # two confirmations of the same room cannot both find it free
+            rooms._lock_for_booking()
             busy = rooms & room_obj._get_booked_rooms(
                 reservation.checkin, reservation.checkout
             )
