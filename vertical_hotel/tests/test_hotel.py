@@ -258,6 +258,37 @@ class TestHotel(TransactionCase):
                 self.checkout_date + timedelta(hours=2),
             )
 
+    def test_folio_line_edit_moves_occupancy(self):
+        """Changing the dates or the room of a folio line moves the room
+        occupancy with it."""
+        product = self.room.product_id
+        line = self._add_room_line(self.hotel_folio, self.room)
+        extra_night = (self.checkout_date, self.checkout_date + timedelta(days=1))
+        self.assertIn(product.id, self._available(*extra_night))
+        line.write({"checkout_date": extra_night[1]})
+        occupancy = self.env["folio.room.line"].search(
+            [("folio_id", "=", self.hotel_folio.id)]
+        )
+        self.assertEqual(len(occupancy), 1)
+        self.assertEqual(occupancy.check_in, self.checkin_date)
+        self.assertEqual(occupancy.check_out, extra_night[1])
+        self.assertNotIn(product.id, self._available(*extra_night))
+        # another room: the first one is free again
+        other_room = self._create_room("Other Room")
+        line.write({"product_id": other_room.product_id.id})
+        occupancy = self.env["folio.room.line"].search(
+            [("folio_id", "=", self.hotel_folio.id)]
+        )
+        self.assertEqual(len(occupancy), 1)
+        self.assertEqual(occupancy.room_id, other_room)
+        self.assertEqual(occupancy.check_out, extra_night[1])
+        self.assertIn(product.id, self._available(*extra_night))
+        self.assertEqual(self.room.status, "available")
+        self.assertEqual(other_room.status, "occupied")
+        # other fields leave it alone
+        line.write({"price_unit": 80.0})
+        self.assertEqual(occupancy.room_id, other_room)
+
     def test_double_booking_across_folios(self):
         """A room cannot be on two folios for overlapping periods."""
         self._add_room_line(self.hotel_folio, self.room)
