@@ -4,7 +4,7 @@
 from datetime import timedelta
 
 from odoo import fields
-from odoo.exceptions import AccessError, ValidationError
+from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import Form, TransactionCase, new_test_user, tagged
 
 
@@ -370,6 +370,61 @@ class TestHotelSecurity(TransactionCase):
         )
         self.assertEqual(folio.room_line_ids.product_id, room.product_id)
         self.assertFalse(room.isroom)
+
+    def test_hotel_user_can_remove_draft_lines_only(self):
+        """A wrong room or service is removed from a draft folio; the lines
+        of a confirmed folio stay."""
+        room = self.env["hotel.room"].create(
+            {
+                "name": "Security Room",
+                "list_price": 100.0,
+                "capacity": 2,
+                "room_categ_id": self.env["hotel.room.type"]
+                .create({"name": "Security Room Type"})
+                .id,
+            }
+        )
+        service = self.env["product.product"].create(
+            {"name": "Security Service", "list_price": 50.0, "isservice": True}
+        )
+        checkin = fields.Datetime.now().replace(microsecond=0) + timedelta(days=1)
+        user_env = self.env(user=self.hotel_user)
+        folio = user_env["hotel.folio"].create(
+            {"partner_id": self.env["res.partner"].create({"name": "Guest"}).id}
+        )
+
+        def add_lines():
+            room_line = user_env["hotel.folio.line"].create(
+                {
+                    "folio_id": folio.id,
+                    "product_id": room.product_id.id,
+                    "checkin_date": checkin,
+                    "checkout_date": checkin + timedelta(days=2),
+                    "product_uom_qty": 2.0,
+                }
+            )
+            service_line = user_env["hotel.service.line"].create(
+                {
+                    "folio_id": folio.id,
+                    "product_id": service.id,
+                    "product_uom_qty": 1.0,
+                }
+            )
+            return room_line, service_line
+
+        room_line, service_line = add_lines()
+        room_line.unlink()
+        service_line.unlink()
+        self.assertFalse(folio.order_id.order_line)
+        self.assertTrue(room.isroom)
+
+        room_line, service_line = add_lines()
+        folio.action_confirm()
+        with self.assertRaises(UserError):
+            room_line.unlink()
+        with self.assertRaises(UserError):
+            service_line.unlink()
+        self.assertEqual(len(folio.order_id.order_line), 2)
 
     def test_internal_user_has_no_hotel_access(self):
         with self.assertRaises(AccessError):
