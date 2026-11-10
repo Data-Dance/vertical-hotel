@@ -307,6 +307,23 @@ class TestReservation(common.TransactionCase):
         )["duration"]
         self.assertEqual(duration, 3)
 
+    def test_stay_nights_not_counted_twice(self):
+        """14:00 to 11:00 the next day is one night with additional hours
+        too, on the reservation and on the folio made from it."""
+        self.env.company.additional_hours = 2
+        checkin = self.base + timedelta(hours=2)
+        reservation = self._reservation(
+            checkin=checkin, checkout=checkin + timedelta(hours=21)
+        )
+        duration = reservation._onchange_check_dates(
+            checkin_date=reservation.checkin, checkout_date=reservation.checkout
+        )["duration"]
+        self.assertEqual(duration, 1)
+        reservation.confirmed_reservation()
+        reservation.create_folio()
+        self.assertEqual(reservation.folio_id.duration, 1)
+        self.assertEqual(reservation.folio_id.room_line_ids.product_uom_qty, 1)
+
     def test_send_reservation_mail(self):
         action = self._reservation().action_send_reservation_mail()
         self.assertEqual(action["res_model"], "mail.compose.message")
